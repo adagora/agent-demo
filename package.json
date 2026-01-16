@@ -1,0 +1,15 @@
+{
+    "name": "code-editing-agent",
+    "version": "3.0.0",
+    "description": "A code-editing agent with Oracle, Search Agent, and parallel subagents",
+    "type": "module",
+    "main": "agent.js",
+    "scripts": {
+      "start": "node agent.js"
+    },
+    "dependencies": {
+      "@anthropic-ai/sdk": "^0.39.0",
+      "@google/generative-ai": "^0.21.0",
+      "openai": "^4.77.0"
+    }
+  }
