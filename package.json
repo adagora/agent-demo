@@ -1,15 +1,35 @@
 {
-    "name": "code-editing-agent",
-    "version": "3.0.0",
-    "description": "A code-editing agent with Oracle, Search Agent, and parallel subagents",
-    "type": "module",
-    "main": "agent.js",
-    "scripts": {
-      "start": "node agent.js"
-    },
-    "dependencies": {
-      "@anthropic-ai/sdk": "^0.39.0",
-      "@google/generative-ai": "^0.21.0",
-      "openai": "^4.77.0"
-    }
+  "name": "code-editing-agent",
+  "version": "4.0.0",
+  "description": "A TypeScript code-editing agent with Oracle, Search Agent, and feedback loops",
+  "type": "module",
+  "main": "dist/agent.js",
+  "scripts": {
+    "build": "bun build src/agent.ts --outdir dist --target bun",
+    "start": "bun dist/agent.js",
+    "dev": "bun --watch src/agent.ts",
+    "typecheck": "bun x tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "lint": "bun x eslint src --ext .ts",
+    "lint:fix": "bun x eslint src --ext .ts --fix",
+    "format": "bun x prettier --write src/**/*.ts",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.21.0",
+    "openai": "^4.77.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "eslint": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "prettier": "^3.4.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0"
   }
+}
