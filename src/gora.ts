@@ -1,11 +1,13 @@
+#!/usr/bin/env bun
 /**
- * Code Editing Agent with Oracle, Search Agent, and Feedback Loops
+ * Gora - AI Code Editing Agent
  *
- * A TypeScript-based coding agent built on these principles:
- * - Five core primitives: read, list, search, edit, execute
- * - Subagents for context management (context is like RAM - can malloc but not free)
- * - Feedback loops for code validation (TypeScript + Tests + Lint)
+ * Main entry point that handles CLI commands and orchestrates the agent.
  *
+ * Per spec, this is a CLI tool that prioritizes:
+ * - Context efficiency through subagent architecture
+ * - Customization via user-defined prompts and configurable models
+ * - Code quality through feedback loops
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -16,8 +18,17 @@ import {
   type FunctionDeclaration,
 } from "@google/generative-ai";
 import * as readline from "readline";
+import { execSync } from "child_process";
 
-import { CONFIG, colors } from "./config.js";
+import {
+  parseCliArgs,
+  loadConfig,
+  buildSystemContext,
+  printHelp,
+  printVersion,
+  initProject,
+} from "./cli.js";
+import { colors } from "./config.js";
 import {
   mainAgentTools,
   subagentTools,
@@ -37,8 +48,9 @@ import {
 import type {
   Message,
   ToolResultBlock,
-  ParallelTaskResult,
   ToolDefinition,
+  GoraConfig,
+  CliOptions,
 } from "./types.js";
 
 // =============================================================================
@@ -48,10 +60,15 @@ import type {
 class Oracle {
   private openaiClient: OpenAI | null = null;
   private anthropicClient: Anthropic;
+  private config: GoraConfig;
 
-  constructor() {
+  constructor(config: GoraConfig) {
+    this.config = config;
     this.anthropicClient = new Anthropic();
-    if (CONFIG.oracleProvider === "openai" && process.env.OPENAI_API_KEY) {
+    if (
+      config.models.oracle.provider === "openai" &&
+      process.env.OPENAI_API_KEY
+    ) {
       this.openaiClient = new OpenAI();
     }
   }
@@ -78,8 +95,9 @@ class Oracle {
   }
 
   async consult(query: string, context: string = ""): Promise<string> {
+    const model = this.config.models.oracle.model;
     console.log(
-      `\n${colors.magenta}┌─ Oracle (${CONFIG.oracleModel}) ─────────────────${colors.reset}`,
+      `\n${colors.magenta}┌─ Oracle (${model}) ─────────────────${colors.reset}`,
     );
     console.log(
       `${colors.magenta}│${colors.reset} ${colors.dim}Query: ${query.substring(0, 60)}...${colors.reset}`,
@@ -103,7 +121,10 @@ Be thorough but concise. Focus on actionable insights.`;
       : query;
 
     try {
-      if (CONFIG.oracleProvider === "openai" && this.openaiClient) {
+      if (
+        this.config.models.oracle.provider === "openai" &&
+        this.openaiClient
+      ) {
         return await this.consultOpenAI(systemPrompt, userMessage);
       } else {
         return await this.consultAnthropic(systemPrompt, userMessage);
@@ -146,7 +167,7 @@ Be thorough but concise. Focus on actionable insights.`;
 
     while (true) {
       const response = await this.openaiClient.chat.completions.create({
-        model: CONFIG.oracleModel,
+        model: this.config.models.oracle.model,
         messages,
         tools: openAITools,
       });
@@ -187,8 +208,8 @@ Be thorough but concise. Focus on actionable insights.`;
 
     while (true) {
       const response = await this.anthropicClient.messages.create({
-        model: CONFIG.oracleModel,
-        max_tokens: CONFIG.maxTokens,
+        model: this.config.models.oracle.model,
+        max_tokens: 8096,
         system: systemPrompt,
         tools: readOnlyTools,
         messages: messages as Anthropic.MessageParam[],
@@ -248,16 +269,21 @@ Be thorough but concise. Focus on actionable insights.`;
 }
 
 // =============================================================================
-// SEARCH AGENT - Fast parallel codebase search (Gemini Flash)
+// SEARCH AGENT - Fast parallel codebase search
 // =============================================================================
 
 class SearchAgent {
   private genAI: GoogleGenerativeAI | null = null;
   private anthropicClient: Anthropic;
+  private config: GoraConfig;
 
-  constructor() {
+  constructor(config: GoraConfig) {
+    this.config = config;
     this.anthropicClient = new Anthropic();
-    if (CONFIG.searchProvider === "google" && process.env.GOOGLE_API_KEY) {
+    if (
+      config.models.search.provider === "google" &&
+      process.env.GOOGLE_API_KEY
+    ) {
       this.genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
     }
   }
@@ -284,8 +310,9 @@ class SearchAgent {
   }
 
   async search(query: string, scope: string = "."): Promise<string> {
+    const model = this.config.models.search.model;
     console.log(
-      `\n${colors.blue}┌─ Search Agent (${CONFIG.searchModel}) ────────${colors.reset}`,
+      `\n${colors.blue}┌─ Search Agent (${model}) ────────${colors.reset}`,
     );
     console.log(
       `${colors.blue}│${colors.reset} ${colors.dim}Query: ${query.substring(0, 60)}${query.length > 60 ? "..." : ""}${colors.reset}`,
@@ -305,7 +332,7 @@ You're searching in: ${scope}
 Return a concise summary of what you found and where.`;
 
     try {
-      if (CONFIG.searchProvider === "google" && this.genAI) {
+      if (this.config.models.search.provider === "google" && this.genAI) {
         return await this.searchWithGemini(systemPrompt, query);
       } else {
         return await this.searchWithAnthropic(systemPrompt, query);
@@ -339,7 +366,7 @@ Return a concise summary of what you found and where.`;
     if (!this.genAI) throw new Error("Gemini client not initialized");
 
     const model = this.genAI.getGenerativeModel({
-      model: CONFIG.searchModel,
+      model: this.config.models.search.model,
       systemInstruction: systemPrompt,
     });
 
@@ -491,8 +518,10 @@ Return a concise summary of what you found and where.`;
 
 class Librarian {
   private client: Anthropic;
+  private config: GoraConfig;
 
-  constructor() {
+  constructor(config: GoraConfig) {
+    this.config = config;
     this.client = new Anthropic();
   }
 
@@ -564,8 +593,8 @@ Search the local codebase for existing usage of ${library}, then provide your an
         iterations++;
 
         const response = await this.client.messages.create({
-          model: CONFIG.mainModel,
-          max_tokens: CONFIG.maxTokens,
+          model: this.config.models.librarian.model,
+          max_tokens: 8096,
           system: systemPrompt,
           tools: librarianTools,
           messages: messages as Anthropic.MessageParam[],
@@ -627,13 +656,15 @@ Search the local codebase for existing usage of ${library}, then provide your an
 }
 
 // =============================================================================
-// SUBAGENT - Isolated agent for focused tasks (context garbage collection)
+// SUBAGENT - Isolated agent for focused tasks
 // =============================================================================
 
 class Subagent {
   private client: Anthropic;
+  private config: GoraConfig;
 
-  constructor() {
+  constructor(config: GoraConfig) {
+    this.config = config;
     this.client = new Anthropic();
   }
 
@@ -721,8 +752,8 @@ Working directory: ${workingDirectory}`;
         iterations++;
 
         const response = await this.client.messages.create({
-          model: CONFIG.mainModel,
-          max_tokens: CONFIG.maxTokens,
+          model: this.config.models.main.model,
+          max_tokens: 8096,
           system: systemPrompt,
           tools: subagentTools,
           messages: messages as Anthropic.MessageParam[],
@@ -797,10 +828,16 @@ Working directory: ${workingDirectory}`;
 }
 
 // =============================================================================
-// MAIN AGENT
+// GORA AGENT - Main orchestrator
 // =============================================================================
 
-class Agent {
+interface ParallelTaskResult {
+  name: string;
+  success: boolean;
+  result: string;
+}
+
+class GoraAgent {
   private anthropicClient: Anthropic;
   private openaiClient: OpenAI | null = null;
   private oracle: Oracle;
@@ -809,17 +846,30 @@ class Agent {
   private librarian: Librarian;
   private conversation: Message[];
   private openaiMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+  private config: GoraConfig;
+  private options: CliOptions;
+  private systemContext: string;
 
-  constructor() {
+  constructor(config: GoraConfig, options: CliOptions) {
+    this.config = config;
+    this.options = options;
     this.anthropicClient = new Anthropic();
-    if (CONFIG.mainModelProvider === "openai" && process.env.OPENAI_API_KEY) {
+
+    if (
+      config.models.main.provider === "openai" &&
+      process.env.OPENAI_API_KEY
+    ) {
       this.openaiClient = new OpenAI();
     }
-    this.oracle = new Oracle();
-    this.subagent = new Subagent();
-    this.searchAgent = new SearchAgent();
-    this.librarian = new Librarian();
+
+    this.oracle = new Oracle(config);
+    this.subagent = new Subagent(config);
+    this.searchAgent = new SearchAgent(config);
+    this.librarian = new Librarian(config);
     this.conversation = [];
+
+    // Build system context from project files
+    this.systemContext = buildSystemContext(options.mode);
   }
 
   private toOpenAITools(
@@ -931,6 +981,11 @@ class Agent {
       console.log(
         `${colors.green}│${colors.reset} ${colors.green}✓ All checks passed!${colors.reset}`,
       );
+
+      // Auto-commit if configured
+      if (this.config.git.autoCommit) {
+        this.autoCommit();
+      }
     } else {
       console.log(
         `${colors.green}│${colors.reset} ${colors.red}✗ Some checks failed${colors.reset}`,
@@ -969,6 +1024,61 @@ class Agent {
       null,
       2,
     );
+  }
+
+  /**
+   * Auto-commit changes when feedback loops pass
+   *
+   * Per spec: When all feedback loops pass, auto-commit with descriptive message
+   */
+  private autoCommit(): void {
+    try {
+      // Check if there are changes to commit
+      const status = execSync("git status --porcelain", { encoding: "utf-8" });
+      if (!status.trim()) {
+        console.log(
+          `${colors.green}│${colors.reset} ${colors.dim}No changes to commit${colors.reset}`,
+        );
+        return;
+      }
+
+      // Stage all changes
+      execSync("git add -A", { encoding: "utf-8" });
+
+      // Generate commit message
+      const diff = execSync("git diff --cached --stat", { encoding: "utf-8" });
+      const files = diff
+        .split("\n")
+        .filter((l) => l.includes("|"))
+        .map((l) => l.split("|")[0].trim());
+      const summary =
+        files.length > 3
+          ? `Update ${files.length} files`
+          : `Update ${files.join(", ")}`;
+
+      const message =
+        this.config.git.commitMessageStyle === "conventional"
+          ? `feat: ${summary}\n\nAuto-committed by gora after passing feedback loops`
+          : summary;
+
+      execSync(`git commit -m "${message}"`, { encoding: "utf-8" });
+      console.log(
+        `${colors.green}│${colors.reset} ${colors.green}✓ Auto-committed: ${summary}${colors.reset}`,
+      );
+
+      // Push if configured
+      if (this.config.git.autoPush) {
+        execSync("git push", { encoding: "utf-8" });
+        console.log(
+          `${colors.green}│${colors.reset} ${colors.green}✓ Pushed to remote${colors.reset}`,
+        );
+      }
+    } catch (err) {
+      const error = err as Error;
+      console.log(
+        `${colors.green}│${colors.reset} ${colors.yellow}Auto-commit skipped: ${error.message}${colors.reset}`,
+      );
+    }
   }
 
   private async runParallelSubagents(
@@ -1036,7 +1146,7 @@ class Agent {
   }
 
   async chat(userMessage: string): Promise<void> {
-    if (CONFIG.mainModelProvider === "openai" && this.openaiClient) {
+    if (this.config.models.main.provider === "openai" && this.openaiClient) {
       await this.chatWithOpenAI(userMessage);
     } else {
       await this.chatWithAnthropic(userMessage);
@@ -1048,8 +1158,9 @@ class Agent {
 
     while (true) {
       const response = await this.anthropicClient.messages.create({
-        model: CONFIG.mainModel,
-        max_tokens: CONFIG.maxTokens,
+        model: this.config.models.main.model,
+        max_tokens: 8096,
+        system: this.systemContext,
         tools: mainAgentTools,
         messages: this.conversation as Anthropic.MessageParam[],
       });
@@ -1060,7 +1171,7 @@ class Agent {
 
       for (const block of response.content) {
         if (block.type === "text") {
-          console.log(`${colors.yellow}Claude${colors.reset}: ${block.text}`);
+          console.log(`${colors.yellow}gora${colors.reset}: ${block.text}`);
         } else if (block.type === "tool_use") {
           this.displayToolCall(
             block.name,
@@ -1094,13 +1205,20 @@ class Agent {
   private async chatWithOpenAI(userMessage: string): Promise<void> {
     if (!this.openaiClient) throw new Error("OpenAI client not initialized");
 
+    if (this.openaiMessages.length === 0) {
+      this.openaiMessages.push({
+        role: "system",
+        content: this.systemContext,
+      });
+    }
+
     this.openaiMessages.push({ role: "user", content: userMessage });
 
     const openAITools = this.toOpenAITools(mainAgentTools);
 
     while (true) {
       const response = await this.openaiClient.chat.completions.create({
-        model: CONFIG.mainModel,
+        model: this.config.models.main.model,
         messages: this.openaiMessages,
         tools: openAITools,
       });
@@ -1126,7 +1244,7 @@ class Agent {
       } else {
         const content = message.content || "";
         if (content) {
-          console.log(`${colors.yellow}GPT${colors.reset}: ${content}`);
+          console.log(`${colors.yellow}gora${colors.reset}: ${content}`);
         }
         break;
       }
@@ -1178,65 +1296,134 @@ class Agent {
 // =============================================================================
 
 async function main(): Promise<void> {
-  // Check main model API key
+  // Parse CLI arguments
+  const options = parseCliArgs();
+
+  // Handle help
+  if (options.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  // Handle version
+  if (options.version) {
+    printVersion();
+    process.exit(0);
+  }
+
+  // Handle init
+  if (options.init) {
+    await initProject();
+    process.exit(0);
+  }
+
+  // Load configuration
+  const config = loadConfig(options.configPath);
+
+  // Check API keys
   if (
-    CONFIG.mainModelProvider === "anthropic" &&
+    config.models.main.provider === "anthropic" &&
     !process.env.ANTHROPIC_API_KEY
   ) {
-    console.error("Error: ANTHROPIC_API_KEY environment variable is required");
-    process.exit(1);
-  }
-
-  if (CONFIG.mainModelProvider === "openai" && !process.env.OPENAI_API_KEY) {
     console.error(
-      "Error: OPENAI_API_KEY environment variable is required for GPT models",
+      `${colors.red}Error: ANTHROPIC_API_KEY environment variable is required${colors.reset}`,
     );
     process.exit(1);
   }
 
-  // Anthropic key still needed for subagents/librarian when using OpenAI main model
-  if (CONFIG.mainModelProvider === "openai" && !process.env.ANTHROPIC_API_KEY) {
+  if (config.models.main.provider === "openai" && !process.env.OPENAI_API_KEY) {
+    console.error(
+      `${colors.red}Error: OPENAI_API_KEY environment variable is required for GPT models${colors.reset}`,
+    );
+    process.exit(1);
+  }
+
+  // Warnings for optional providers
+  if (
+    config.models.main.provider === "openai" &&
+    !process.env.ANTHROPIC_API_KEY
+  ) {
     console.warn(
-      "Warning: ANTHROPIC_API_KEY not set, subagents and librarian will not work",
+      `${colors.yellow}Warning: ANTHROPIC_API_KEY not set, subagents and librarian will not work${colors.reset}`,
     );
   }
 
-  if (CONFIG.oracleProvider === "openai" && !process.env.OPENAI_API_KEY) {
+  if (
+    config.models.oracle.provider === "openai" &&
+    !process.env.OPENAI_API_KEY
+  ) {
     console.warn(
-      "Warning: OPENAI_API_KEY not set, Oracle will use Anthropic fallback",
+      `${colors.yellow}Warning: OPENAI_API_KEY not set, Oracle will use Anthropic fallback${colors.reset}`,
     );
   }
 
-  if (CONFIG.searchProvider === "google" && !process.env.GOOGLE_API_KEY) {
+  if (
+    config.models.search.provider === "google" &&
+    !process.env.GOOGLE_API_KEY
+  ) {
     console.warn(
-      "Warning: GOOGLE_API_KEY not set, Search Agent will use Anthropic fallback",
+      `${colors.yellow}Warning: GOOGLE_API_KEY not set, Search Agent will use Anthropic fallback${colors.reset}`,
     );
   }
 
-  const agent = new Agent();
+  // Create agent
+  const agent = new GoraAgent(config, options);
+
+  // Dry run mode - show what would be done
+  if (options.dryRun) {
+    console.log(`
+${colors.cyan}╔═══════════════════════════════════════════════════════════╗
+║                     DRY RUN MODE                          ║
+╚═══════════════════════════════════════════════════════════╝${colors.reset}
+
+${colors.yellow}Mode:${colors.reset} ${options.mode.toUpperCase()}
+${colors.yellow}Task:${colors.reset} ${options.task || "(interactive)"}
+${colors.yellow}Loop:${colors.reset} ${options.loop || "single iteration"}
+${colors.yellow}YOLO:${colors.reset} ${options.yolo ? "yes (skip confirmations)" : "no"}
+
+${colors.dim}Would execute with:${colors.reset}
+  Main Model: ${config.models.main.model} (${config.models.main.provider})
+  Oracle: ${config.models.oracle.model} (${config.models.oracle.provider})
+  Search: ${config.models.search.model} (${config.models.search.provider})
+  Librarian: ${config.models.librarian.model} (${config.models.librarian.provider})
+
+${colors.dim}No changes will be made.${colors.reset}
+`);
+    process.exit(0);
+  }
+
+  // Single task mode
+  if (options.task) {
+    // Loop mode with task
+    if (options.loop) {
+      await runLoop(agent, options);
+    } else {
+      await agent.chat(options.task);
+    }
+    return;
+  }
+
+  // Interactive mode
+  console.log(`
+${colors.cyan}╔═══════════════════════════════════════════════════════════╗
+║                         GORA                              ║
+║              AI Code Editing Agent                        ║
+╠═══════════════════════════════════════════════════════════╣
+║  Mode:      ${options.mode.toUpperCase().padEnd(45)}║
+║  Main:      ${(config.models.main.model + " (" + config.models.main.provider + ")").padEnd(45)}║
+║  Oracle:    ${(config.models.oracle.model + " (" + config.models.oracle.provider + ")").padEnd(45)}║
+║  Search:    ${(config.models.search.model + " (" + config.models.search.provider + ")").padEnd(45)}║
+╚═══════════════════════════════════════════════════════════╝${colors.reset}
+
+${colors.dim}Tips:
+- Run "feedback_loop" to validate your code
+- Use 'ctrl-c' to quit${colors.reset}
+`);
 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
-
-  console.log(`
-${colors.cyan}╔═══════════════════════════════════════════════════════════╗
-║           Code Editing Agent (TypeScript)                 ║
-║        with Oracle, Search Agent & Feedback Loops         ║
-╠═══════════════════════════════════════════════════════════╣
-║  Main Agent: ${CONFIG.mainModel.padEnd(43)}║
-║  Oracle:     ${(CONFIG.oracleModel + " (" + CONFIG.oracleProvider + ")").padEnd(43)}║
-║  Search:     ${(CONFIG.searchModel + " (" + CONFIG.searchProvider + ")").padEnd(43)}║
-╚═══════════════════════════════════════════════════════════╝${colors.reset}
-
-${colors.dim}Tips:
-- Run "feedback_loop" to validate your code (TypeScript + Tests + Lint)
-- Use "oracle" for deep analysis
-- Use "search_agent" for fast codebase exploration
-- Use "librarian" for external library research
-- Use 'ctrl-c' to quit${colors.reset}
-`);
 
   const askQuestion = (): void => {
     rl.question(`${colors.blue}You${colors.reset}: `, async (input) => {
@@ -1257,6 +1444,63 @@ ${colors.dim}Tips:
   };
 
   askQuestion();
+}
+
+/**
+ * Run agent in loop mode
+ *
+ * Per spec: Run continuously until plan complete or max iterations reached
+ */
+async function runLoop(agent: GoraAgent, options: CliOptions): Promise<void> {
+  const maxIterations = options.loop === "infinite" ? Infinity : options.loop!;
+  let iteration = 0;
+
+  console.log(`
+${colors.cyan}╔═══════════════════════════════════════════════════════════╗
+║                    LOOP MODE                              ║
+╚═══════════════════════════════════════════════════════════╝${colors.reset}
+
+${colors.dim}Running up to ${maxIterations === Infinity ? "∞" : maxIterations} iterations...${colors.reset}
+`);
+
+  while (iteration < maxIterations) {
+    iteration++;
+    console.log(
+      `\n${colors.cyan}═══ Iteration ${iteration}/${maxIterations === Infinity ? "∞" : maxIterations} ═══${colors.reset}\n`,
+    );
+
+    try {
+      const task =
+        options.task ||
+        "Continue working on the implementation plan. Pick the next highest priority task.";
+      await agent.chat(task);
+    } catch (err) {
+      const error = err as Error;
+      console.error(`${colors.red}Error: ${error.message}${colors.reset}`);
+
+      if (!options.yolo) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+
+        const answer = await new Promise<string>((resolve) => {
+          rl.question("Continue? (y/n): ", resolve);
+        });
+        rl.close();
+
+        if (answer.toLowerCase() !== "y") {
+          console.log(`${colors.dim}Loop terminated by user.${colors.reset}`);
+          break;
+        }
+      }
+    }
+  }
+
+  console.log(`
+${colors.green}═══ Loop completed ═══${colors.reset}
+Total iterations: ${iteration}
+`);
 }
 
 main().catch(console.error);

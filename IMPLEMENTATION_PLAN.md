@@ -1,6 +1,21 @@
-# GORA - Code Editing Agent Specification
+# GORA - Implementation Plan
 
 > A TypeScript CLI tool for solo developers that prioritizes context efficiency, customization, and code quality through intelligent multi-agent orchestration.
+
+## Recently Completed (This Session)
+
+- CLI interface (src/cli.ts) with all CLI flags per spec
+  - `--plan`, `--build`, `--loop [N]`, `--yolo`, `--dry-run`
+  - `-c, --command`, `-v, --verbose`, `--config`, `--help`, `--version`
+  - `--init` wizard support
+- Main gora.ts entry point with mode detection
+- PROMPT file integration (PROMPT_build.md / PROMPT_plan.md)
+- gora.config.json support with config loading and merging
+- Loop mode implementation (continuous execution up to N iterations)
+- Auto-commit on success when feedback loops pass
+- Init wizard (--init) to create project files
+- ESLint configuration
+- Comprehensive CLI tests (24 passing tests)
 
 ## Table of Contents
 
@@ -14,6 +29,44 @@
 8. [Configuration](#configuration)
 9. [Security & Safety](#security--safety)
 10. [Technical Requirements](#technical-requirements)
+
+---
+
+## Remaining Tasks
+
+### Testing & Quality
+
+- Comprehensive tests for gora.ts main entry point
+- Integration tests for full workflow (plan mode, build mode, loop mode)
+- Error handling tests (API failures, missing config, etc.)
+
+### Librarian Agent Features (Per Spec)
+
+- Web search integration (DuckDuckGo scraping, no API key required)
+- GitHub CLI integration for repository research
+- Request classification system (TYPE A-D)
+- Documentation discovery (sitemaps, versioned docs)
+- Evidence synthesis with permalinks
+
+### Error Handling & Reliability
+
+- Exponential backoff for API failures (3 retry attempts)
+- Rate limit handling with countdown timer and auto-resume
+- Graceful degradation when API keys missing
+- Timeout handling for long-running operations
+
+### Session Management
+
+- Token tracking across all agent calls
+- Cost estimation at session end
+- Session summary with usage statistics
+
+### Nice-to-Have Enhancements
+
+- Better streaming output formatting
+- Progress indicators for long operations
+- Detailed verbose mode logging
+- Interrupt handling (Ctrl+C) with graceful cleanup
 
 ---
 

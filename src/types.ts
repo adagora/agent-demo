@@ -3,7 +3,68 @@
  */
 
 // =============================================================================
-// CONFIGURATION TYPES
+// CLI TYPES
+// =============================================================================
+
+export type OperatingMode = "plan" | "build";
+
+export interface CliOptions {
+  mode: OperatingMode;
+  loop?: number | "infinite";
+  yolo: boolean;
+  dryRun: boolean;
+  task?: string;
+  verbose: boolean;
+  configPath?: string;
+  help: boolean;
+  version: boolean;
+  init: boolean;
+}
+
+// =============================================================================
+// GORA CONFIG TYPES (gora.config.json)
+// =============================================================================
+
+export interface ModelConfig {
+  model: string;
+  provider: "anthropic" | "openai" | "google";
+}
+
+export interface GoraConfig {
+  version: string;
+  models: {
+    main: ModelConfig;
+    oracle: ModelConfig;
+    search: ModelConfig;
+    librarian: ModelConfig;
+  };
+  feedbackLoops: {
+    typescript: boolean;
+    tests: boolean;
+    lint: boolean;
+    maxRetries: number;
+    custom?: Array<{ name: string; command: string }>;
+  };
+  git: {
+    autoCommit: boolean;
+    autoPush: boolean;
+    commitMessageStyle: "conventional" | "simple";
+  };
+  security: {
+    allowedPaths: string[];
+    confirmDestructive: boolean;
+    blockedCommands: string[];
+  };
+  toolRestrictions?: {
+    oracle?: string[];
+    search?: string[];
+    librarian?: string[];
+    subagent?: string[];
+  };
+}
+
+// =============================================================================
+// RUNTIME CONFIGURATION TYPES
 // =============================================================================
 
 export type MainModel =
